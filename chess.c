@@ -12,11 +12,10 @@
 #include <sys/socket.h>
 #include <SOIL/SOIL.h>
 #include <unistd.h>
-#define PORT 8080
 
 #define GRIDSIZE 8
 #define WINDOWSIZE 600
-#define DELAY 100
+#define UPDATEDELAY 100
 
 #define PAWN	6
 #define KNIGHT	5
@@ -35,11 +34,18 @@ extern const char _binary_image_png_start[];
 extern const char _binary_image_png_end[];
 
 char grid[GRIDSIZE][GRIDSIZE];
+int socket_fd, client_fd;
 
 char cursorX = 0xff;
 char cursorY = 0xff;
 int plyCount = 0;
 int is_server = 0;
+
+int port = 8080;
+//char addr[] = "";
+
+float mouseX;
+float mouseY;
 
 struct boardSquare {
 	char x;
@@ -52,7 +58,6 @@ struct chessMove {
 	struct boardSquare to;
 };
 
-int socket_fd, client_fd;
 GLuint texture;
 
 GLuint loadMemTexture()
@@ -71,21 +76,18 @@ GLuint loadMemTexture()
 	return t;
 }
 
-void initGrid() {
+void initGrid()
+{
 	for(int x=0; x<GRIDSIZE; x++) {
 		for(int y=0; y<GRIDSIZE; y++) {
 		    grid[x][y] = 0;
-		    
-			if (!((y<6)&&(y>1))) {
-				grid[x][y] = ((int)((7 - y) / 4) << 7) | PAWN;
-			}
 		}
 	}
-	
-	/*for (int x; x<8; x++) {
+
+	for (int x=0; x<8; x++) {
 	    grid[x][1] = WHITE | PAWN;
 	    grid[x][6] = BLACK | PAWN;
-	}*/
+	}
 	
 	grid[0][0] = WHITE | ROOK;
 	grid[1][0] = WHITE | KNIGHT;
@@ -106,11 +108,12 @@ void initGrid() {
 	grid[7][7] = BLACK | ROOK;
 }
 
-bool isMoveValid(int fromX, int fromY, int toX, int toY) {
+bool isMoveValid(int fromX, int fromY, int toX, int toY)
+{
 	char pieceToMove = grid[fromX][fromY];
 	int pieceColour = 1 & (pieceToMove >> 7);
 
-	// check from and to coordinates arre different
+	// check from and to coordinates are different
 	if ((fromX == toX) && (fromY == toY)) {
 		return false;
 	}
@@ -185,18 +188,33 @@ bool isMoveValid(int fromX, int fromY, int toX, int toY) {
 	return true;
 }
 
+void printMove(struct chessMove *move)
+{
+	char fromRank, toRank;
+	fromRank = move->from.x + 97;
+	toRank = move->to.x + 97;
+    
+	printf("%c%d-%c%d\n",
+		fromRank,
+		move->from.y,
+		toRank,
+		move->to.y);
+}
+
 int sendMove(struct chessMove move)
 {
 	send(client_fd, &move.from.x, 1, 0);
 	send(client_fd, &move.from.y, 1, 0);
 	send(client_fd, &move.to.x, 1, 0);
 	send(client_fd, &move.to.y, 1, 0);
-	printf("Sent move\n");
-	
+	printf("Sent move ");
+	printMove(&move);
+
 	return 0;
 }
 
-int readMove(struct chessMove *move) {
+int readMove(struct chessMove *move)
+{
 	int valread;
 
 	valread = read(client_fd, &move->from.x, 1);
@@ -204,16 +222,20 @@ int readMove(struct chessMove *move) {
 	valread = read(client_fd, &move->to.x, 1);
 	valread = read(client_fd, &move->to.y, 1);
 	
-	printf("Recieved data : %d %d %d %d\n",
+	/*printf("Recieved data : %d %d %d %d\n",
 		move->from.x,
 		move->from.y,
 		move->to.x,
-		move->to.y);
-	
+		move->to.y);*/
+
+	printf("Recieved move ");
+	printMove(move);
+
 	return 0;
 }
 
-void movePiece(int fromX, int fromY, int toX, int toY) {
+void movePiece(int fromX, int fromY, int toX, int toY)
+{
 	if (isMoveValid(fromX, fromY, toX, toY) != true) {
 		cursorX = cursorY = 0xff;
 		return;
@@ -241,7 +263,14 @@ void movePiece(int fromX, int fromY, int toX, int toY) {
 	plyCount += 1;
 }
 
-void onMouseClick(int button, int state, int x, int y) {
+void onMouseMove(int x, int y)
+{
+	mouseX = -1.0 + (float)2*x / WINDOWSIZE;
+	mouseY = +1.0 - (float)2*y / WINDOWSIZE;
+}
+
+void onMouseClick(int button, int state, int x, int y)
+{
 	float cellWidth = WINDOWSIZE / GRIDSIZE;
 	if (button != GLUT_LEFT_BUTTON) {
 		return;
@@ -277,11 +306,12 @@ int pollSocket(int fd)
 	status = select(fd+1, &rd, NULL, NULL, &tv);
 
 	if (status == 0) { return 0;}
-	else if (status == -1) {return 0;}
+	else if (status == -1) { return 0; }
 	else {return 1;}
 }
 
-void update(int value) {
+void update(int value)
+{
 	// poll the socket and see if we've received a move
 	if (pollSocket(client_fd)) {
 		struct chessMove move;
@@ -293,10 +323,11 @@ void update(int value) {
 	}
 
 	glutPostRedisplay();
-	glutTimerFunc(DELAY, update, 0);
+	glutTimerFunc(UPDATEDELAY, update, 0);
 }
 
-void draw() {
+void draw()
+{
 	glClearColor(0.0, 0.0, 0.0, 0.0);
 	glClear(GL_COLOR_BUFFER_BIT);
 	
@@ -320,7 +351,7 @@ void draw() {
 			float root_x = -1.0 + width * x;
 			float root_y = -1.0 + width * y;
 			float root_x_tex = spriteWidth * ((grid[x][y] & 15) - 1);
-			float root_y_tex = spriteHeight * (1 - (1 & (grid[x][y] >> 7)));
+			float root_y_tex = spriteHeight * (1 - pieceCol);
 			
 			if (grid[x][y] & 15) {	            
 				glTexCoord2f(root_x_tex, root_y_tex+spriteHeight); glVertex2f(root_x, root_y);
@@ -366,7 +397,7 @@ int openClient()
 	}
 
 	serv_addr.sin_family = AF_INET;
-	serv_addr.sin_port = htons(PORT);
+	serv_addr.sin_port = htons(port);
 
 	// Convert IPv4 and IPv6 addresses from text to binary
 	if (inet_pton(AF_INET, "127.0.0.1", &serv_addr.sin_addr)
@@ -412,7 +443,7 @@ int openServer()
 
 	address.sin_family = AF_INET;
 	address.sin_addr.s_addr = INADDR_ANY;
-	address.sin_port = htons(PORT);
+	address.sin_port = htons(port);
 
 	// Forcefully attaching socket to the port 8080
 	if (bind(socket_fd, (struct sockaddr*)&address,
@@ -440,38 +471,21 @@ int openServer()
 	return 0;
 }
 
-// this doesn't work and I haven't figured out why yet
-void printMove(struct chessMove *move) {
-	char fromRank, toRank;
-	fromRank = move->from.x + 97;
-	toRank = move->to.x + 97;
-    
-	printf("Move %c%d-%c%d\n",
-		fromRank,
-		move->from.y,
-		toRank,
-		move->to.y);
-}
-
 /*
-int closeClient()
+int closeSockets()
 {
 	// closing the connected socket
 	close(client_fd);
 	
-	return 0;
-}
+	if (is_server) {
+		shutdown(socket_fd, SHUT_RDWR);
+	}
 
-int closeServer() {
-	// closing the connected socket
-	close(client_fd);
-	// closing the listening socket
-	shutdown(socket_fd, SHUT_RDWR);
-	
 	return 0;
 }*/
 
-int startGame(int argc, char **argv) {
+int startGame(int argc, char **argv)
+{
 	glutInit(&argc, argv);
 	glutSetOption(GLUT_MULTISAMPLE, 8);
 	glutInitDisplayMode(GLUT_SINGLE | GLUT_MULTISAMPLE | GLUT_RGBA);
@@ -488,10 +502,11 @@ int startGame(int argc, char **argv) {
 	
 	glutDisplayFunc(draw);
 	glutMouseFunc(onMouseClick);
-	glutTimerFunc(DELAY, update, 0);
+	glutPassiveMotionFunc(onMouseMove);
+	glutTimerFunc(UPDATEDELAY, update, 0);
 	
-	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-	glEnable(GL_BLEND);
+	//glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	//glEnable(GL_BLEND);
 	
 	glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_DECAL);
 	texture = loadMemTexture();
