@@ -81,6 +81,7 @@ GLuint loadMemTexture()
 	return t;
 }
 
+// Initialises 8x8 board with standard chess configuration
 void initGrid()
 {
 	for(int x=0; x<GRIDSIZE; x++) {
@@ -368,7 +369,7 @@ void draw()
 	for(int x=0; x<GRIDSIZE; x++) {
 		for(int y=0; y<GRIDSIZE; y++) {
 			int pieceCol = 1 & (grid[x][y] >> 7);
-			float tileCol = (x+y)%2;
+			float tileCol = (x+y+is_server+1)%2;
 			if (tileCol)
 			{
 			    glColor3f(WHITECOL);
@@ -463,7 +464,6 @@ int openServer()
 		exit(EXIT_FAILURE);
 	}
 
-	// Forcefully attaching socket to the port 8080
 	if (setsockopt(socket_fd, SOL_SOCKET,
 			SO_REUSEADDR | SO_REUSEPORT, &opt,
 			sizeof(opt))) {
@@ -475,7 +475,6 @@ int openServer()
 	address.sin_addr.s_addr = INADDR_ANY;
 	address.sin_port = htons(port);
 
-	// Forcefully attaching socket to the port 8080
 	if (bind(socket_fd, (struct sockaddr*)&address,
 			sizeof(address)) < 0) {
 		perror("bind failed");
@@ -486,6 +485,7 @@ int openServer()
 		exit(EXIT_FAILURE);
 	}
 	
+	printf("Listening on %s:%d\n", addr, port);
 	printf("Waiting for client\n");
 
 	client_fd = accept(
@@ -516,12 +516,13 @@ int closeSockets()
 
 void reshape(int w, int h)
 {
-    if ( w != h)
+    /*if ( w != h)
     {
         WINDOWSIZE = max(w, h);
         glutReshapeWindow(WINDOWSIZE, WINDOWSIZE);
     	glOrtho(-1.0, 1.0, -1.0, 1.0, -1.0, 1.0);
-    }
+    }*/
+    WINDOWSIZE = min(w, h);
 }
 
 int startGame(int argc, char **argv)
@@ -566,13 +567,16 @@ int main(int argc, char **argv)
 	
 	int opt;
 	
-	while ((opt = getopt(argc, argv, "h:cs")) != -1)
+	while ((opt = getopt(argc, argv, "h:p:cs")) != -1)
 	{
 	    switch(opt)
 	    {
 	        case 'h':
-	            addr = optarg;
-	            break;
+			addr = optarg;
+			break;
+		case 'p':
+			port = atoi(optarg);		
+			break;
 	        case 's':
 		        is_server = 1;
 		        break;
