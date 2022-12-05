@@ -14,8 +14,10 @@
 #include <unistd.h>
 
 #define GRIDSIZE 8
-#define WINDOWSIZE 600
 #define UPDATEDELAY 100
+
+#define WHITECOL 1, 1, 0.8
+#define BLACKCOL 0.3, 0.5, 0.25
 
 #define PAWN	6
 #define KNIGHT	5
@@ -27,6 +29,7 @@
 #define BLACK	0
 #define WHITE	128
 
+// stole these from somewhere
 #define min(i, j) (((i) < (j)) ? (i) : (j))
 #define max(i, j) (((i) > (j)) ? (i) : (j))
 
@@ -41,8 +44,10 @@ char cursorY = 0xff;
 int plyCount = 0;
 int is_server = 0;
 
+int WINDOWSIZE = 600;
+
 int port = 8080;
-//char addr[] = "";
+char *addr = "127.0.0.1";
 
 float mouseX;
 float mouseY;
@@ -196,9 +201,9 @@ void printMove(struct chessMove *move)
     
 	printf("%c%d-%c%d\n",
 		fromRank,
-		move->from.y,
+		move->from.y + 1,
 		toRank,
-		move->to.y);
+		move->to.y + 1);
 }
 
 int sendMove(struct chessMove move)
@@ -215,12 +220,16 @@ int sendMove(struct chessMove move)
 
 int readMove(struct chessMove *move)
 {
-	int valread;
+	int valread = 0;
 
-	valread = read(client_fd, &move->from.x, 1);
-	valread = read(client_fd, &move->from.y, 1);
-	valread = read(client_fd, &move->to.x, 1);
-	valread = read(client_fd, &move->to.y, 1);
+	valread += read(client_fd, &move->from.x, 1);
+	valread += read(client_fd, &move->from.y, 1);
+	valread += read(client_fd, &move->to.x,   1);
+	valread += read(client_fd, &move->to.y,   1);
+	
+	if (valread != 4) {
+	    exit(-1);
+	}
 	
 	/*printf("Recieved data : %d %d %d %d\n",
 		move->from.x,
@@ -321,6 +330,21 @@ void update(int value)
 		grid[move.from.x][move.from.y] = 0;
 		plyCount += 1;
 	}
+    
+    if (is_server)
+    {
+        if (0 == (plyCount % 2))
+        { glutSetWindowTitle("NetChess [Server] - Your Move"); }
+        else
+        { glutSetWindowTitle("NetChess [Server]"); }
+    }
+    else
+    {
+        if (1 == (plyCount % 2))
+        { glutSetWindowTitle("NetChess [Client] - Your Move"); }
+        else
+        { glutSetWindowTitle("NetChess [Client]"); }
+    }
 
 	glutPostRedisplay();
 	glutTimerFunc(UPDATEDELAY, update, 0);
@@ -345,8 +369,14 @@ void draw()
 		for(int y=0; y<GRIDSIZE; y++) {
 			int pieceCol = 1 & (grid[x][y] >> 7);
 			float tileCol = (x+y)%2;
-			tileCol = 0.5 + (tileCol / 2);
-			glColor3f(tileCol, tileCol, tileCol);
+			if (tileCol)
+			{
+			    glColor3f(WHITECOL);
+			}
+			else
+			{
+			    glColor3f(BLACKCOL);
+			}
 
 			float root_x = -1.0 + width * x;
 			float root_y = -1.0 + width * y;
@@ -400,7 +430,7 @@ int openClient()
 	serv_addr.sin_port = htons(port);
 
 	// Convert IPv4 and IPv6 addresses from text to binary
-	if (inet_pton(AF_INET, "127.0.0.1", &serv_addr.sin_addr)
+	if (inet_pton(AF_INET, addr, &serv_addr.sin_addr)
 		<= 0) {
 		printf("Invalid address/ Address not supported \n");
 		return -1;
@@ -484,9 +514,20 @@ int closeSockets()
 	return 0;
 }*/
 
+void reshape(int w, int h)
+{
+    if ( w != h)
+    {
+        WINDOWSIZE = max(w, h);
+        glutReshapeWindow(WINDOWSIZE, WINDOWSIZE);
+    	glOrtho(-1.0, 1.0, -1.0, 1.0, -1.0, 1.0);
+    }
+}
+
 int startGame(int argc, char **argv)
 {
 	glutInit(&argc, argv);
+	glEnable(GL_MULTISAMPLE);  
 	glutSetOption(GLUT_MULTISAMPLE, 8);
 	glutInitDisplayMode(GLUT_SINGLE | GLUT_MULTISAMPLE | GLUT_RGBA);
 	glutInitWindowSize(WINDOWSIZE, WINDOWSIZE);
@@ -501,6 +542,7 @@ int startGame(int argc, char **argv)
 	}
 	
 	glutDisplayFunc(draw);
+	//glutReshapeFunc(reshape);
 	glutMouseFunc(onMouseClick);
 	glutPassiveMotionFunc(onMouseMove);
 	glutTimerFunc(UPDATEDELAY, update, 0);
@@ -517,26 +559,39 @@ int startGame(int argc, char **argv)
 
 int main(int argc, char **argv)
 {
-	if (argc != 2) {
+	/*if (argc != 2) {
 		printf("USAGE:\n\t./netchess [-s/-c]\n");
 		return -1;
+	}*/
+	
+	int opt;
+	
+	while ((opt = getopt(argc, argv, "h:cs")) != -1)
+	{
+	    switch(opt)
+	    {
+	        case 'h':
+	            addr = optarg;
+	            break;
+	        case 's':
+		        is_server = 1;
+		        break;
+		    case 'c':
+		        is_server = 0;
+		        break;
+	    }
 	}
 
-	if (strcmp(argv[1], "-s") == 0) {
-		printf("Running in server mode\n");
-		is_server = 1;
-		openServer();
-		startGame(argc, argv);
-	}
-	else if (strcmp(argv[1], "-c") == 0) {
-		printf("Running in client mode\n");
-		is_server = 0;
-		openClient();
-		startGame(argc, argv);
-	}
-	else {
-		printf("Invalid mode flag\n");
-	}
+    if (is_server) {
+        printf("Running in server mode\n");
+        openServer();
+    }
+    else
+    {
+        printf("Running in client mode\n");
+        openClient();
+    }
 
+    startGame(argc, argv);
 	return 0;
 }
