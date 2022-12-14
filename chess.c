@@ -36,22 +36,6 @@
 extern const char _binary_image_png_start[];
 extern const char _binary_image_png_end[];
 
-char grid[GRIDSIZE][GRIDSIZE];
-int socket_fd, client_fd;
-
-char cursorX = 0xff;
-char cursorY = 0xff;
-int plyCount = 0;
-int is_server = 0;
-
-int WINDOWSIZE = 600;
-
-int port = 8080;
-char *addr = "127.0.0.1";
-
-float mouseX;
-float mouseY;
-
 struct boardSquare {
 	char x;
 	char y;
@@ -63,7 +47,140 @@ struct chessMove {
 	struct boardSquare to;
 };
 
+enum directions {
+	N	= 7,
+	E	= 5,
+	S	= 1,
+	W	= 3,
+	NE	= 8,
+	SE	= 2,
+	SW	= 0,
+	NW	= 6,
+};
+
+char grid[GRIDSIZE][GRIDSIZE];
+char traversal_matrix[9][GRIDSIZE][GRIDSIZE];
+int socket_fd, client_fd;
+
+struct boardSquare cursor = {0xff, 0xff};
+int plyCount = 0;
+int is_server = 0;
+
+int WINDOWSIZE = 600;
+
+int port = 8080;
+char *addr = "127.0.0.1";
+
+float mouseX;
+float mouseY;
+
 GLuint texture;
+
+#include "game.h"
+#include "network.h"
+#include "graphics.h"
+
+int sign(int i) 
+{
+	return (i > 0) - (i < 0);
+}
+
+void blockSquare(int x, int y)
+{
+	for (int u=1; u<=traversal_matrix[N][x][y]; u++) {
+		traversal_matrix[S][x][y+u] -= traversal_matrix[S][x][y];
+	}
+	for (int u=1; u<=traversal_matrix[S][x][y]; u++) {
+		traversal_matrix[N][x][y-u] -= traversal_matrix[N][x][y];
+	}
+	for (int u=1; u<=traversal_matrix[E][x][y]; u++) {
+		traversal_matrix[W][x+u][y] -= traversal_matrix[W][x][y];
+	}
+	for (int u=1; u<=traversal_matrix[W][x][y]; u++) {
+		traversal_matrix[E][x-u][y] -= traversal_matrix[E][x][y];
+	}
+	for (int u=1; u<=traversal_matrix[NE][x][y]; u++) {
+		traversal_matrix[SW][x+u][y+u] -= traversal_matrix[SW][x][y];
+	}
+	for (int u=1; u<=traversal_matrix[SW][x][y]; u++) {
+		traversal_matrix[NE][x-u][y-u] -= traversal_matrix[NE][x][y];
+	}
+	for (int u=1; u<=traversal_matrix[SE][x][y]; u++) {
+		traversal_matrix[NW][x+u][y-u] -= traversal_matrix[NW][x][y];
+	}
+	for (int u=1; u<=traversal_matrix[NW][x][y]; u++) {
+		traversal_matrix[SE][x-u][y+u] -= traversal_matrix[SE][x][y];
+	}
+}
+
+void unblockSquare(int x, int y)
+{
+	for (int u=1; u<=traversal_matrix[N][x][y]; u++) {
+		traversal_matrix[S][x][y+u] += traversal_matrix[S][x][y];
+	}
+	for (int u=1; u<=traversal_matrix[S][x][y]; u++) {
+		traversal_matrix[N][x][y-u] += traversal_matrix[N][x][y];
+	}
+	for (int u=1; u<=traversal_matrix[E][x][y]; u++) {
+		traversal_matrix[W][x+u][y] += traversal_matrix[W][x][y];
+	}
+	for (int u=1; u<=traversal_matrix[W][x][y]; u++) {
+		traversal_matrix[E][x-u][y] += traversal_matrix[E][x][y];
+	}
+	for (int u=1; u<=traversal_matrix[NE][x][y]; u++) {
+		traversal_matrix[SW][x+u][y+u] += traversal_matrix[SW][x][y];
+	}
+	for (int u=1; u<=traversal_matrix[SW][x][y]; u++) {
+		traversal_matrix[NE][x-u][y-u] += traversal_matrix[NE][x][y];
+	}
+	for (int u=1; u<=traversal_matrix[SE][x][y]; u++) {
+		traversal_matrix[NW][x+u][y-u] += traversal_matrix[NW][x][y];
+	}
+	for (int u=1; u<=traversal_matrix[NW][x][y]; u++) {
+		traversal_matrix[SE][x-u][y+u] += traversal_matrix[SE][x][y];
+	}
+}
+
+void printObMat()
+{
+	for (int y=7; y>=0; y--) {
+		int U = N;
+		printf("%d: %d %d %d %d %d %d %d %d\n", y,
+		traversal_matrix[U][0][y],
+		traversal_matrix[U][1][y],
+		traversal_matrix[U][2][y],
+		traversal_matrix[U][3][y],
+		traversal_matrix[U][4][y],
+		traversal_matrix[U][5][y],
+		traversal_matrix[U][6][y],
+		traversal_matrix[U][7][y]
+		);
+	}
+}
+
+void genObstructionMatrix()
+{
+	for (int x=0; x<GRIDSIZE; x++) {
+		for (int y=0; y<GRIDSIZE; y++) {
+			traversal_matrix[N][x][y] = 7 - y;
+			traversal_matrix[S][x][y] = y;
+			traversal_matrix[E][x][y] = 7 - x;
+			traversal_matrix[W][x][y] = x;
+			traversal_matrix[SW][x][y] = min(x, y);
+			traversal_matrix[NW][x][y] = min(x, 7 - y);
+			traversal_matrix[SE][x][y] = min(7 - x, y);
+			traversal_matrix[NE][x][y] = min(7 - x, 7 - y);
+		}
+	}
+	
+	for (int x=0; x<GRIDSIZE; x++) {
+		for (int y=0; y<GRIDSIZE; y++) {
+			if (grid[x][y]) {
+				blockSquare(x, y);
+			}
+		}
+	}
+}
 
 GLuint loadMemTexture()
 {
@@ -114,19 +231,33 @@ void initGrid()
 	grid[7][7] = BLACK | ROOK;
 }
 
-bool isMoveValid(int fromX, int fromY, int toX, int toY)
+bool checkPathClearance(struct boardSquare from, struct boardSquare to)
 {
-	char pieceToMove = grid[fromX][fromY];
+	int dX = to.x - from.x;
+	int dY = to.y - from.y;
+
+	int x_step = sign(dX);
+	int y_step = sign(dY);
+	int mag = max(abs(dX), abs(dY));
+
+	int dirIndex = 4 + x_step + 3*y_step;
+	int maxMag = traversal_matrix[dirIndex][from.x][from.y];
+	return mag <= maxMag;
+}
+
+bool isMoveValid(struct boardSquare from, struct boardSquare to)
+{
+	char pieceToMove = grid[from.x][from.y];
 	int pieceColour = 1 & (pieceToMove >> 7);
 
 	// check from and to coordinates are different
-	if ((fromX == toX) && (fromY == toY)) {
+	if ((from.x == to.x) && (from.y == to.y)) {
 		return false;
 	}
 
 	// check piece isn't moving to a square with a piece of the same colour
-	if (grid[toX][toY]) {
-		if (1 & (grid[toX][toY] >> 7) == pieceColour) {
+	if (grid[to.x][to.y]) {
+		if (1 & (grid[to.x][to.y] >> 7) == pieceColour) {
 			return false;
 		}
 	}
@@ -136,8 +267,8 @@ bool isMoveValid(int fromX, int fromY, int toX, int toY)
 		return false;
 	}
 
-	int dX = toX - fromX;
-	int dY = toY - fromY;
+	int dX = to.x - from.x;
+	int dY = to.y - from.y;
 
 	//check piece is moving according to the rules
 	switch (pieceToMove & 15) {
@@ -145,16 +276,16 @@ bool isMoveValid(int fromX, int fromY, int toX, int toY)
 			int pawnDirection = (2 * pieceColour) - 1;
 			int maxRange = 1;
 			
-			if ((fromY == 1 && pieceColour == 1) || (fromY == 6 && pieceColour == 0)) {
+			if ((from.y == 1 && pieceColour == 1) || (from.y == 6 && pieceColour == 0)) {
 			    maxRange = 2;
 			}
 			
 			if (dX) {
-				if (!(abs(dX) == 1 && dY == pawnDirection && grid[toX][toY])) {
+				if (!(abs(dX) == 1 && dY == pawnDirection && grid[to.x][to.y])) {
 					return false;
 				}
 			}
-			else if (grid[toX][toY]) {
+			else if (grid[to.x][to.y]) {
 				return false;
 			}
 			if (dY * pawnDirection > maxRange || dY * pawnDirection < 0) {
@@ -165,11 +296,13 @@ bool isMoveValid(int fromX, int fromY, int toX, int toY)
 			if (dX && dY) {
 				return false;
 			}
+			if (!checkPathClearance(from, to)) { return false; }
 			break;
 		case BISHOP:
 			if (abs(dX) != abs(dY)) {
 				return false;
 			}
+			if (!checkPathClearance(from, to)) { return false; }
 			break;
 		case KNIGHT:
 			if (min(abs(dX), abs(dY)) != 1) {
@@ -188,6 +321,7 @@ bool isMoveValid(int fromX, int fromY, int toX, int toY)
 			if ((abs(dX) != abs(dY)) && (dX && dY)) {
 	        		return false;
 			}
+			if (!checkPathClearance(from, to)) { return false; }
 	        	break;
 	};
 
@@ -244,33 +378,28 @@ int readMove(struct chessMove *move)
 	return 0;
 }
 
-void movePiece(int fromX, int fromY, int toX, int toY)
+void movePiece(struct boardSquare from, struct boardSquare to)
 {
-	if (isMoveValid(fromX, fromY, toX, toY) != true) {
-		cursorX = cursorY = 0xff;
+	/*if (isMoveValid(from, to) != true) {
+		cursor.x = cursor.y = 0xff;
 		return;
-	}	
+	}*/	
 
-	int pieceColour = (grid[fromX][fromY] >> 7) & 1;
+	/*int pieceColour = (grid[from.x][from.y] >> 7) & 1;
 	if (pieceColour != is_server) {
-		cursorX = cursorY = 0xff;
+		cursor.x = cursor.y = 0xff;
 		return;
+	}*/
+
+	unblockSquare(from.x, from.y);
+	if (!grid[to.x][to.y]) {
+		blockSquare(to.x, to.y);
 	}
+	printObMat();
 
-	grid[toX][toY] = grid[fromX][fromY];
-	grid[fromX][fromY] = 0;
-	cursorX = cursorY = 0xff;
-
-	//send move
-	struct chessMove move;
-	move.from.x = fromX;
-	move.from.y = fromY;
-	move.to.x = toX;
-	move.to.y = toY;
-
-	sendMove(move);
-
-	plyCount += 1;
+	grid[to.x][to.y] = grid[from.x][from.y];
+	grid[from.x][from.y] = 0;
+	cursor.x = cursor.y = 0xff;
 }
 
 void onMouseMove(int x, int y)
@@ -279,25 +408,31 @@ void onMouseMove(int x, int y)
 	mouseY = +1.0 - (float)2*y / WINDOWSIZE;
 }
 
-void onMouseClick(int button, int state, int x, int y)
+void onMouseClick(int button, int state, int pixelX, int pixelY)
 {
 	float cellWidth = WINDOWSIZE / GRIDSIZE;
 	if (button != GLUT_LEFT_BUTTON) {
 		return;
 	}
 
-	int cellX = (int) x / cellWidth;
-	int cellY = GRIDSIZE - 1 - (int)(y / cellWidth);
+	struct boardSquare tile;
+	tile.x = (char)(pixelX / cellWidth);
+	tile.y = (char)(GRIDSIZE - pixelY/cellWidth);
 
 	if (state == GLUT_DOWN) {
-		cursorX = cellX;
-		cursorY = cellY;
+		cursor = tile;
 	}
 	else {
-		movePiece(
-			cursorX, cursorY,
-			cellX, cellY
-		);
+		//send move
+		struct chessMove move;
+		move.from = cursor;
+		move.to = tile;
+		if (isMoveValid(cursor, tile)) {
+			sendMove(move);
+			movePiece(cursor,tile);
+			plyCount += 1;
+		}
+		
 	}
 }
 
@@ -327,9 +462,12 @@ void update(int value)
 		struct chessMove move;
 		readMove(&move);
 		
-		grid[move.to.x][move.to.y] = grid[move.from.x][move.from.y];
+		/*grid[move.to.x][move.to.y] = grid[move.from.x][move.from.y];
 		grid[move.from.x][move.from.y] = 0;
+		plyCount += 1;*/
+
 		plyCount += 1;
+		movePiece(move.from, move.to);
 	}
     
     if (is_server)
@@ -402,8 +540,8 @@ void draw()
 	glDisable(GL_TEXTURE_2D);
 
 	// draw cursor
-	float root_x = -1.0 + width * cursorX;
-	float root_y = -1.0 + width * cursorY;
+	float root_x = -1.0 + width * cursor.x;
+	float root_y = -1.0 + width * cursor.y;
 
 	glLineWidth(3.0);
 	glColor3f(1.0, 0.0, 0.0);
@@ -534,6 +672,7 @@ int startGame(int argc, char **argv)
 	glutInitWindowSize(WINDOWSIZE, WINDOWSIZE);
 	glutInitWindowPosition(100, 100);
 	initGrid();
+	genObstructionMatrix();
 	
 	if (is_server) {
 		glutCreateWindow("NetChess [Server]");
@@ -564,7 +703,7 @@ int main(int argc, char **argv)
 		printf("USAGE:\n\t./netchess [-s/-c]\n");
 		return -1;
 	}*/
-	
+
 	int opt;
 	
 	while ((opt = getopt(argc, argv, "h:p:cs")) != -1)
