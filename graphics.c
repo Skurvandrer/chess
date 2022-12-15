@@ -12,7 +12,8 @@ void draw();
 void onMouseClick(int button, int state, int pixelX, int pixelY);
 void onMouseMove(int x, int y);
 GLuint loadMemTexture();
-void update(int value);
+void glutUpdateFunc(int value);
+void update();
 
 GLuint texture;
 int WINDOWSIZE = 600;
@@ -52,7 +53,7 @@ void draw()
 	glBegin(GL_QUADS);
 	for(int x=0; x<GRIDSIZE; x++) {
 		for(int y=0; y<GRIDSIZE; y++) {
-			int pieceCol = 1 & (grid[x][y] >> 7);
+			int pieceCol = 1 & (grid[x][y] >> 6);
 			float tileCol = (x+y+is_server+1)%2;
 			if (tileCol)
 			{
@@ -122,8 +123,8 @@ int startGame(int argc, char **argv)
 	glutInitDisplayMode(GLUT_SINGLE | GLUT_MULTISAMPLE | GLUT_RGBA);
 	glutInitWindowSize(WINDOWSIZE, WINDOWSIZE);
 	glutInitWindowPosition(100, 100);
-	initGrid();
 	genOcclusionMatrix();
+	initGrid();
 	
 	if (is_server) {
 		glutCreateWindow("NetChess [Server]");
@@ -136,7 +137,7 @@ int startGame(int argc, char **argv)
 	//glutReshapeFunc(reshape);
 	//glutPassiveMotionFunc(onMouseMove);
 	glutMouseFunc(onMouseClick);
-	glutTimerFunc(UPDATEDELAY, update, 0);
+	glutTimerFunc(UPDATEDELAY, glutUpdateFunc, 0);
 	
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 	glEnable(GL_BLEND);
@@ -177,10 +178,19 @@ void onMouseClick(int button, int state, int pixelX, int pixelY)
 		move.from = cursor;
 		move.to = tile;
 		if (isMoveValid(cursor, tile)) {
-			sendMove(move);
-			movePiece(cursor,tile);
-			plyCount += 1;
+			if (movePiece(cursor,tile)) {
+				sendMove(move);
+				plyCount += 1;
+			}
 		}
 		cursor.x = cursor.y = 0xff;
 	}
 }
+
+void glutUpdateFunc(int value)
+{
+    update();
+	glutPostRedisplay();
+	glutTimerFunc(UPDATEDELAY, glutUpdateFunc, 0);
+}
+

@@ -6,14 +6,14 @@
 #include "graphics.c"
 
 
-void update(int value)
+void update()
 {
 	// poll the socket and see if we've received a move
 	if (pollSocket(client_fd)) {
 		struct chessMove move;
 		readMove(&move);
-		plyCount += 1;
 		movePiece(move.from, move.to);
+		plyCount += 1;
 	}
     
     if (is_server)
@@ -30,9 +30,6 @@ void update(int value)
         else
         { glutSetWindowTitle("NetChess [Client]"); }
     }
-
-	glutPostRedisplay();
-	glutTimerFunc(UPDATEDELAY, update, 0);
 }
 
 int main(int argc, char **argv)
